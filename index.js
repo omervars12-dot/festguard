@@ -17,7 +17,7 @@ const BOT_ID = "1542872463870922814";
 const SES_KANALI_ID = "1542872463870922814";   
 const LOG_KANALI_ID = "1547734034023452722";   
 
-// MUAFİYETLER: Sadece bu kişi ve bu role sahip olanlar rol verebilir / link atabilir
+// MUAFİYETLER
 const YETKILI_USER_ID = "1542872076980068372"; 
 const YETKILI_ROL_ID = "1542874337546338386";     
 
@@ -25,8 +25,8 @@ const spamMap = new Map();
 let globalConnection = null;
 
 client.once('ready', async () => {
-    console.log(`[BAŞARILI] Bot aktif! Giriş yapılan hesap: ${client.user.tag}`);
-    client.user.setActivity('Sunucu Güvenlikte 🛡️', { type: 3 });
+    console.log(`[BAŞARILI] Piyasaya çıktık! Bot aktif: ${client.user.tag}`);
+    client.user.setActivity('Gözüm Üzerinizde 👀', { type: 3 });
     sesKanalinaBaglan();
 });
 
@@ -81,7 +81,7 @@ async function logGonder(guild, embed) {
     } catch (e) {}
 }
 
-// --- LİNK VE 15 MESAJ SPAM KORUMASI ---
+// --- LİNK VE 10 MESAJ SPAM KORUMASI ---
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.guild) return;
 
@@ -98,45 +98,55 @@ client.on('messageCreate', async (message) => {
                 await message.member.timeout(10 * 60 * 1000, "İzinsiz link (URL) paylaşımı.");
                 
                 const embed = new EmbedBuilder()
-                    .setColor('#FF0000')
-                    .setTitle('🚨 İzinsiz Link Engellendi & Timeout Atıldı!')
-                    .setDescription(`**Kullanıcı:** ${message.author} (${message.author.tag})\n**Kanal:** ${message.channel}\n**İşlem:** Mesaj silindi ve 10 dakika zaman aşımı uygulandı.`);
+                    .setColor('#FF0055')
+                    .setTitle('🚨 Yakalandın! Kaçak Link Tespit Edildi!')
+                    .setDescription(`**Vatandaş:** ${message.author} (${message.author.tag})\n**Olay Yeri:** ${message.channel}\n**Ceza:** Link çöpe atıldı, arkadaşa da 10 dakikalık soğuk su terapisi uygulandı. 🧊`)
+                    .setFooter({ text: 'Guard Bot Şakaya Gelmez', iconURL: client.user.displayAvatarURL() })
+                    .setTimestamp();
                 logGonder(message.guild, embed);
             } catch (err) {}
             return;
         }
     }
 
-    // 2. Üst üste 15 mesaj spam koruması
+    // 2. Üst üste 10 mesaj spam koruması (ve mesaj silme)
     if (!isOwner && !isAuthorizedUser && !hasAuthorizedRole) {
         const userId = message.author.id;
-        const userSpam = spamMap.get(userId) || { count: 0, lastTime: Date.now() };
+        const userSpam = spamMap.get(userId) || { count: 0, lastTime: Date.now(), messages: [] };
         const now = Date.now();
 
-        if (now - userSpam.lastTime < 5000) {
+        if (now - userSpam.lastTime < 5000) { 
             userSpam.count += 1;
-            if (userSpam.count >= 15) {
+            userSpam.messages.push(message); 
+
+            if (userSpam.count >= 10) { 
                 try {
-                    await message.member.timeout(10 * 60 * 1000, "Üst üste 15 mesaj (Spam) atma.");
+                    await message.channel.bulkDelete(userSpam.messages).catch(() => null);
+                    await message.member.timeout(10 * 60 * 1000, "Üst üste 10 mesaj (Spam) atma.");
+                    
                     const embed = new EmbedBuilder()
-                        .setColor('#FFA500')
-                        .setTitle('⚠️ Üst Üste 15 Mesaj Spam Koruması!')
-                        .setDescription(`**Kullanıcı:** ${message.author} (${message.author.tag})\n**İşlem:** Hızlı mesaj spamı nedeniyle 10 dakika zaman aşımı verildi.`);
+                        .setColor('#FFAA00')
+                        .setTitle('🛑 Klavyeyi Yavaşça Yere Bırak!')
+                        .setDescription(`**Hız Tutkunu:** ${message.author} (${message.author.tag})\n**Olay:** Arkadaş klavyede ralli yaptığı için radara yakalandı. \n**Sonuç:** Attığı **${userSpam.messages.length}** mesaj temizlendi ve kendisine 10 dakika dinlenme molası verildi. 🧘‍♂️`)
+                        .setFooter({ text: 'Spam sevmiyoruz canım.', iconURL: client.user.displayAvatarURL() })
+                        .setTimestamp();
                     logGonder(message.guild, embed);
+                    
                     userSpam.count = 0;
+                    userSpam.messages = [];
                 } catch (e) {}
             }
         } else {
             userSpam.count = 1;
+            userSpam.messages = [message];
         }
         userSpam.lastTime = now;
         spamMap.set(userId, userSpam);
     }
 });
 
-// --- ROL KORUMA (KESİN ÇÖZÜM İÇİN GECİKME EKLENDİ) ---
+// --- ROL KORUMA ---
 client.on('guildMemberUpdate', async (oldMember, newMember) => {
-    // Audit Log'un Discord veritabanına düşmesi için 1.5 saniye bekle
     await new Promise(resolve => setTimeout(resolve, 1500));
 
     const fetchedLogs = await newMember.guild.fetchAuditLogs({
@@ -147,7 +157,6 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
     if (!fetchedLogs) return;
     const auditEntry = fetchedLogs.entries.first();
     
-    // Eğer log yoksa veya süresi 5 saniyeden eskiyse es geç
     if (!auditEntry || auditEntry.target.id !== newMember.id || (Date.now() - auditEntry.createdTimestamp > 5000)) return;
 
     const { executor } = auditEntry;
@@ -160,30 +169,29 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
     const isAuthorizedUser = executorMember.id === YETKILI_USER_ID;
     const hasAuthorizedRole = executorMember.roles.cache.has(YETKILI_ROL_ID);
 
-    // Muaf olanlardan biriyse sorun yok, sadece log tut
     if (isOwner || isAuthorizedUser || hasAuthorizedRole) {
         const embed = new EmbedBuilder()
-            .setColor('#00FF00')
-            .setTitle('📝 Rol Güncellendi (Yetkili Onaylı)')
-            .setDescription(`**Yetkili:** ${executorMember} (${executor.tag})\n**Üye:** ${newMember}\n**Durum:** İşlem yetkili/muaf tarafından yapıldı.`);
+            .setColor('#00FF7F')
+            .setTitle('📜 Yasal İşlem Başarılı!')
+            .setDescription(`**Yetkili:** ${executorMember} (${executor.tag})\n**Şanslı Üye:** ${newMember}\n**Durum:** Rol işlemi başarıyla tamamlandı. Patron onaylı, tamamen legal! 💼`)
+            .setTimestamp();
         logGonder(newMember.guild, embed);
     } 
-    // MUAF DEĞİLSE CEZA KES VE GERİ AL!
     else {
         try {
-            // 1. Rolü geri al (eski haline getir)
             await newMember.roles.set(oldMember.roles.cache);
 
-            // 2. Rol vermeye çalışan kişiyi sunucudan KICK'le
             if (executorMember.kickable) {
                 await executorMember.kick("İzinsiz başkasına rol verme girişimi (Guard Koruma)");
             }
 
-            // 3. Uyarı logunu gönder
             const embed = new EmbedBuilder()
                 .setColor('#FF0000')
-                .setTitle('🚨 YETKİSİZ ROL VERME ENGELLENDİ!')
-                .setDescription(`**Yetkisiz İşlem Yapan:** ${executorMember} (${executor.tag})\n**Yapılan İşlem:** Sunucudan atıldı (Kick)!\n**Hedef Üye:** ${newMember}\n**Durum:** Verilen roller geri alındı.`);
+                .setTitle('⛔ HOOOP! Orada Dur Bakalım!')
+                .setDescription(`**Kaçak Yönetici:** ${executorMember} (${executor.tag})\n**Hedef Üye:** ${newMember}\n**Olay:** Arkadaş kendisini patron sanıp rol dağıtmaya kalktı. \n**Cezası:** Verilen rol tıpış tıpış geri alındı, rolü veren kişi de sunucudan mancınıkla fırlatıldı! ✈️ İyi uçuşlar.`)
+                .setThumbnail(executorMember.user.displayAvatarURL())
+                .setFooter({ text: 'Bot abin affetmez.' })
+                .setTimestamp();
             logGonder(newMember.guild, embed);
         } catch (e) {
             console.log("[GUARD HATASI] Botun yetkisi yetmiyor olabilir:", e);
@@ -194,9 +202,11 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 // --- ÜYE GİRİŞ / ÇIKIŞ LOGLARI ---
 client.on('guildMemberAdd', async (member) => {
     const embed = new EmbedBuilder()
-        .setColor('#00FF00')
-        .setTitle('📥 Sunucuya Yeni Üye Katıldı')
-        .setDescription(`**Üye:** ${member} (${member.user.tag})\n**ID:** ${member.id}`);
+        .setColor('#00FFFF')
+        .setTitle('📥 Mekana Yeni Biri Damladı!')
+        .setDescription(`**Gelen Gideni Aratmaz Umarım:** ${member} (${member.user.tag})\n**Kimlik (ID):** ${member.id}\nÇayları tazeleyin, yeni üyemiz geldi! ☕`)
+        .setThumbnail(member.user.displayAvatarURL())
+        .setTimestamp();
     logGonder(member.guild, embed);
 });
 
@@ -207,16 +217,17 @@ client.on('guildMemberRemove', async (member) => {
     }).catch(() => null);
 
     const auditEntry = fetchedLogs?.entries.first();
-    let aciklama = `**Üye:** ${member} (${member.user.tag}) sunucudan ayrıldı.`;
+    let aciklama = `**Giden:** ${member} (${member.user.tag})\nBavulunu topladı ve aramızdan sessizce ayrıldı. Yolun açık olsun! 🚶‍♂️`;
 
     if (auditEntry && auditEntry.target.id === member.id && (Date.now() - auditEntry.createdTimestamp < 5000)) {
-        aciklama = `**Atılan Üye:** ${member} (${member.user.tag})\n**Atan Yetkili:** <@${auditEntry.executor.id}> (${auditEntry.executor.tag})`;
+        aciklama = `**Şutlanan:** ${member} (${member.user.tag})\n**Şutlayan Yetkili:** <@${auditEntry.executor.id}> (${auditEntry.executor.tag})\nArkadaşa tekme tokat girişip kapı dışarı ettiler. 👋`;
     }
 
     const embed = new EmbedBuilder()
-        .setColor('#FF0000')
-        .setTitle('📤 Üye Sunucudan Ayrıldı / Atıldı')
-        .setDescription(aciklama);
+        .setColor('#8B0000')
+        .setTitle('📤 Bir Yıldız Daha Kaydı...')
+        .setDescription(aciklama)
+        .setTimestamp();
     logGonder(member.guild, embed);
 });
 
@@ -233,9 +244,10 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         const auditEntry = fetchedLogs?.entries.first();
         if (auditEntry && auditEntry.target.id === newState.member.id && (Date.now() - auditEntry.createdTimestamp < 3000)) {
             const embed = new EmbedBuilder()
-                .setColor('#FFA500')
-                .setTitle('🔊 Üye Sesten Atıldı')
-                .setDescription(`**Yetkili:** <@${auditEntry.executor.id}> (${auditEntry.executor.tag})\n**Atılan Üye:** ${newState.member} (${newState.member.user.tag})\n**Kanal:** ${oldState.channel.name}`);
+                .setColor('#FF4500')
+                .setTitle('🥾 Sesten Şutlandı!')
+                .setDescription(`**Yetkili:** <@${auditEntry.executor.id}>\n**Kovulan:** ${newState.member}\n**Kanal:** ${oldState.channel.name}\nBiri sesten yaka paça dışarı atıldı!`)
+                .setTimestamp();
             logGonder(guild, embed);
         }
         return;
@@ -252,15 +264,17 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 
         if (newState.serverMute) {
             const embed = new EmbedBuilder()
-                .setColor('#FF0000')
-                .setTitle('🔇 Üye Sunucuda Susturuldu (Server Mute)')
-                .setDescription(`**Yetkili:** <@${executor.id}> (${executor.tag})\n**Susturulan:** ${newState.member} (${newState.member.user.tag})`);
+                .setColor('#DC143C')
+                .setTitle('🤐 Fişi Çekildi (Susturuldu)')
+                .setDescription(`**Fişi Çeken:** <@${executor.id}>\n**Susturulan:** ${newState.member}\nBiri fazla konuştu galiba, mikrofonun kablosunu kestiler. ✂️`)
+                .setTimestamp();
             logGonder(guild, embed);
         } else {
             const embed = new EmbedBuilder()
-                .setColor('#00FF00')
-                .setTitle('🔊 Üyenin Susturulması Kaldırıldı (Server Unmute)')
-                .setDescription(`**Yetkili:** <@${executor.id}> (${executor.tag})\n**Susturması Açılan:** ${newState.member} (${newState.member.user.tag})`);
+                .setColor('#32CD32')
+                .setTitle('🎤 Fişi Takıldı (Susturma Açıldı)')
+                .setDescription(`**Affeden Yetkili:** <@${executor.id}>\n**Konuşma Hakkı Kazanan:** ${newState.member}\nBantları söktük, hadi yine iyisin!`)
+                .setTimestamp();
             logGonder(guild, embed);
         }
     }
@@ -272,9 +286,10 @@ client.on('guildAuditLogEntryCreate', async (auditLog, guild) => {
         const timeoutChange = auditLog.changes.find(c => c.key === 'communication_disabled_until');
         if (timeoutChange) {
             const embed = new EmbedBuilder()
-                .setColor('#FF0000')
-                .setTitle('⏱️ Kullanıcıya Zaman Aşımı (Timeout) Verildi')
-                .setDescription(`**Yetkili:** <@${auditLog.executor.id}>\n**Cezalandırılan:** <@${auditLog.target.id}>\n**Bitiş Süresi:** ${timeoutChange.new ? new Date(timeoutChange.new).toLocaleString() : 'Kaldırıldı'}`);
+                .setColor('#8A2BE2')
+                .setTitle(timeoutChange.new ? '🛋️ Soğuk Su Terapisi Başladı!' : '🕊️ Özgürlüğüne Kavuştu!')
+                .setDescription(`**Yargıç:** <@${auditLog.executor.id}>\n**Sanık:** <@${auditLog.target.id}>\n**Durum:** ${timeoutChange.new ? `Buzdolabına kilitlendi. Bitiş: ${new Date(timeoutChange.new).toLocaleString()}` : 'Cezası bitti, aramıza döndü.'}`)
+                .setTimestamp();
             logGonder(guild, embed);
         }
     }
