@@ -13,12 +13,13 @@ const client = new Client({
     ]
 });
 
-const BOT_ID = "1542872463870922814";          // Botun ID'si (Ses kanalında duracak olan)
+const BOT_ID = "1542872463870922814";          // Botun ID'si
 const MUAF_ROL_ID = "1542874337546338386";     // Muaf özel rol ID'si
 const SES_KANALI_ID = "BURAYA_SES_KANALI_ID";  // Botun sürekli duracağı ses kanalının ID'si
 const LOG_KANALI_ID = "1547734034023452722";   // Logların atılacağı kanal ID'si
 
 const spamMap = new Map();
+let globalConnection = null;
 
 client.once('ready', async () => {
     console.log(`[BAŞARILI] Bot aktif! Giriş yapılan hesap: ${client.user.tag}`);
@@ -26,15 +27,18 @@ client.once('ready', async () => {
     sesKanalinaBaglan();
 });
 
-// --- SES KANALINDA SABİT DURMA ---
+// --- SES KANALINDA SABİT DURMA VE KOPUNCA TEKRAR BAĞLANMA ---
 async function sesKanalinaBaglan() {
     try {
         const guild = client.guilds.cache.first();
         if (!guild) return;
         const channel = guild.channels.cache.get(SES_KANALI_ID);
-        if (!channel) return;
+        if (!channel) {
+            console.log("[HATA] Ses kanalı bulunamadı, ID'yi kontrol edin!");
+            return;
+        }
 
-        const connection = joinVoiceChannel({
+        globalConnection = joinVoiceChannel({
             channelId: channel.id,
             guildId: guild.id,
             adapterCreator: guild.voiceAdapterCreator,
@@ -42,31 +46,37 @@ async function sesKanalinaBaglan() {
             selfMute: false
         });
 
-        connection.on(VoiceConnectionStatus.Disconnected, async () => {
+        globalConnection.on(VoiceConnectionStatus.Disconnected, async () => {
             try {
                 await Promise.race([
-                    entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
-                    entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+                    entersState(globalConnection, VoiceConnectionStatus.Signalling, 5_000),
+                    entersState(globalConnection, VoiceConnectionStatus.Connecting, 5_000),
                 ]);
             } catch (error) {
-                connection.destroy();
+                if (globalConnection) globalConnection.destroy();
                 setTimeout(() => sesKanalinaBaglan(), 5000);
             }
         });
 
-        // Botun kendi ID'sini ses kanalında tutma kontrolü
-        setInterval(async () => {
-            const currentChannel = guild.channels.cache.get(SES_KANALI_ID);
-            if (currentChannel) {
-                const botMember = guild.members.cache.get(BOT_ID) || await guild.members.fetch(BOT_ID).catch(() => null);
-                if (botMember && !botMember.voice.channelId) {
-                    sesKanalinaBaglan();
-                }
-            }
-        }, 15000);
-
-    } catch (error) {}
+        console.log(`[SES] ${channel.name} kanalına başarıyla bağlandı.`);
+    } catch (error) {
+        console.log("[SES HATASI]:", error);
+    }
 }
+
+// Botun sesten düşmesini kesin olarak engelleyen ek kontrol döngüsü
+setInterval(async () => {
+    try {
+        const guild = client.guilds.cache.first();
+        if (!guild) return;
+        const botMember = guild.members.cache.get(BOT_ID) || await guild.members.fetch(BOT_ID).catch(() => null);
+        
+        // Eğer bot seste değilse veya hedef kanalda değilse tekrar sok
+        if (!botMember || botMember.voice.channelId !== SES_KANALI_ID) {
+            sesKanalinaBaglan();
+        }
+    } catch (e) {}
+}, 10000);
 
 async function logGonder(guild, embed) {
     try {
@@ -165,20 +175,19 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
     }
 });
 
-// --- SES HAREKETLERİ, SESTEN ATILMA VE SUSTURMA LOGLARI ---
+// --- SES HAREKETLERİ (SADECE SESTEN ATILMA VE SUNUCU SUSTURMASI) ---
 client.on('voiceStateUpdate', async (oldState, newState) => {
     const guild = newState.guild;
 
-    // 1. Sesten Atılma veya Kanal Değiştirme (Başka biri tarafından sesten atılma)
+    // 1. Sesten Atılma Tespiti (Biri tarafından odadan atıldıysa)
     if (oldState.channelId && !newState.channelId) {
-        // Kullanıcı sesten çıkmış. Audit log'a bakarak biri mi attı anlayalım.
         const fetchedLogs = await guild.fetchAuditLogs({
             limit: 1,
             type: AuditLogEvent.MemberDisconnect,
         }).catch(() => null);
 
         const auditEntry = fetchedLogs?.entries.first();
-        // Eğer son 3 saniye içinde bir disconnect logu oluştuysa ve hedef bu üyeyse sesten atılmıştır
+        // Eğer log varsa ve son 3 saniye içinde bu kullanıcı için yapıldıysa gerçek bir "sesten atılmadır"
         if (auditEntry && auditEntry.target.id === newState.member.id && (Date.now() - auditEntry.createdTimestamp < 3000)) {
             const embed = new EmbedBuilder()
                 .setColor('#FFA500')
@@ -188,7 +197,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         }
     }
 
-    // 2. Sunucu Susturulması (Server Mute) Atılması veya Açılması
+    // 2. Sunucu Susturması (Server Mute - Kullanıcının kendi kapatması DEĞİLDİR)
     if (oldState.serverMute !== newState.serverMute) {
         const fetchedLogs = await guild.fetchAuditLogs({
             limit: 1,
@@ -201,13 +210,13 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         if (newState.serverMute) {
             const embed = new EmbedBuilder()
                 .setColor('#FF0000')
-                .setTitle('🔇 Üye Sunucuda Susturuldu (Mute)')
+                .setTitle('🔇 Üye Sunucuda Susturuldu (Server Mute)')
                 .setDescription(`**Yetkili:** <@${executor.id}> (${executor.tag})\n**Susturulan:** ${newState.member} (${newState.member.user.tag})`);
             logGonder(guild, embed);
         } else {
             const embed = new EmbedBuilder()
                 .setColor('#00FF00')
-                .setTitle('🔊 Üyenin Susturulması Kaldırıldı (Unmute)')
+                .setTitle('🔊 Üyenin Susturulması Kaldırıldı (Server Unmute)')
                 .setDescription(`**Yetkili:** <@${executor.id}> (${executor.tag})\n**Susturması Açılan:** ${newState.member} (${newState.member.user.tag})`);
             logGonder(guild, embed);
         }
