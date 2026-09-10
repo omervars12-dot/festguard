@@ -17,16 +17,15 @@ const BOT_ID = "1542872463870922814";
 const SES_KANALI_ID = "1542872463870922814";   
 const LOG_KANALI_ID = "1547734034023452722";   
 
-// MUAFİYETLER
-const YETKILI_USER_ID = "1542872076980068372"; 
+// DİKTATÖR ROLÜ: SADECE ve SADECE bu role sahip olanlar işlem yapabilir!
 const YETKILI_ROL_ID = "1542874337546338386";     
 
 const spamMap = new Map();
 let globalConnection = null;
 
 client.once('ready', async () => {
-    console.log(`[BAŞARILI] Piyasaya çıktık! Bot aktif: ${client.user.tag}`);
-    client.user.setActivity('Gözüm Üzerinizde 👀', { type: 3 });
+    console.log(`[BAŞARILI] Bot aktif! Yargı dağıtmaya hazır: ${client.user.tag}`);
+    client.user.setActivity('Kimseye Acımıyorum 🪓', { type: 3 });
     sesKanalinaBaglan();
 });
 
@@ -85,14 +84,13 @@ async function logGonder(guild, embed) {
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.guild) return;
 
-    const isOwner = message.author.id === message.guild.ownerId;
-    const isAuthorizedUser = message.author.id === YETKILI_USER_ID;
+    // Artık yetkili bypass'ı sadece TEK BİR ROL!
     const hasAuthorizedRole = message.member?.roles.cache.has(YETKILI_ROL_ID);
 
     // 1. Link / URL Koruması
     const urlRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|(discord\.gg\/[^\s]+)/gi;
     if (urlRegex.test(message.content)) {
-        if (!isOwner && !isAuthorizedUser && !hasAuthorizedRole) {
+        if (!hasAuthorizedRole) {
             try {
                 await message.delete();
                 await message.member.timeout(10 * 60 * 1000, "İzinsiz link (URL) paylaşımı.");
@@ -100,8 +98,8 @@ client.on('messageCreate', async (message) => {
                 const embed = new EmbedBuilder()
                     .setColor('#FF0055')
                     .setTitle('🚨 Yakalandın! Kaçak Link Tespit Edildi!')
-                    .setDescription(`**Vatandaş:** ${message.author} (${message.author.tag})\n**Olay Yeri:** ${message.channel}\n**Ceza:** Link çöpe atıldı, arkadaşa da 10 dakikalık soğuk su terapisi uygulandı. 🧊`)
-                    .setFooter({ text: 'Guard Bot Şakaya Gelmez', iconURL: client.user.displayAvatarURL() })
+                    .setDescription(`**Vatandaş:** ${message.author} (${message.author.tag})\n**Olay Yeri:** ${message.channel}\n**Ceza:** Özel rozeti olmadığı için linki çöpe atıldı, kendisine 10 dakika buz tedavisi uygulandı. 🧊`)
+                    .setFooter({ text: 'Sadece VIP rol link atabilir.', iconURL: client.user.displayAvatarURL() })
                     .setTimestamp();
                 logGonder(message.guild, embed);
             } catch (err) {}
@@ -110,7 +108,7 @@ client.on('messageCreate', async (message) => {
     }
 
     // 2. Üst üste 10 mesaj spam koruması (ve mesaj silme)
-    if (!isOwner && !isAuthorizedUser && !hasAuthorizedRole) {
+    if (!hasAuthorizedRole) {
         const userId = message.author.id;
         const userSpam = spamMap.get(userId) || { count: 0, lastTime: Date.now(), messages: [] };
         const now = Date.now();
@@ -127,7 +125,7 @@ client.on('messageCreate', async (message) => {
                     const embed = new EmbedBuilder()
                         .setColor('#FFAA00')
                         .setTitle('🛑 Klavyeyi Yavaşça Yere Bırak!')
-                        .setDescription(`**Hız Tutkunu:** ${message.author} (${message.author.tag})\n**Olay:** Arkadaş klavyede ralli yaptığı için radara yakalandı. \n**Sonuç:** Attığı **${userSpam.messages.length}** mesaj temizlendi ve kendisine 10 dakika dinlenme molası verildi. 🧘‍♂️`)
+                        .setDescription(`**Hız Tutkunu:** ${message.author} (${message.author.tag})\n**Olay:** Arkadaş VIP rolü olmadan klavyede ralli yaptı. \n**Sonuç:** Attığı **${userSpam.messages.length}** mesaj silindi ve 10 dakika mola verildi. 🧘‍♂️`)
                         .setFooter({ text: 'Spam sevmiyoruz canım.', iconURL: client.user.displayAvatarURL() })
                         .setTimestamp();
                     logGonder(message.guild, embed);
@@ -145,7 +143,7 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// --- ROL KORUMA ---
+// --- SIFIR TOLERANS ROL KORUMASI ---
 client.on('guildMemberUpdate', async (oldMember, newMember) => {
     await new Promise(resolve => setTimeout(resolve, 1500));
 
@@ -165,34 +163,46 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
     const executorMember = await newMember.guild.members.fetch(executor.id).catch(() => null);
     if (!executorMember) return;
 
-    const isOwner = executorMember.id === newMember.guild.ownerId;
-    const isAuthorizedUser = executorMember.id === YETKILI_USER_ID;
+    // TEK KURAL: O meşhur role sahip mi? Admin veya kurucu olması umurumda değil!
     const hasAuthorizedRole = executorMember.roles.cache.has(YETKILI_ROL_ID);
 
-    if (isOwner || isAuthorizedUser || hasAuthorizedRole) {
+    if (hasAuthorizedRole) {
         const embed = new EmbedBuilder()
             .setColor('#00FF7F')
             .setTitle('📜 Yasal İşlem Başarılı!')
-            .setDescription(`**Yetkili:** ${executorMember} (${executor.tag})\n**Şanslı Üye:** ${newMember}\n**Durum:** Rol işlemi başarıyla tamamlandı. Patron onaylı, tamamen legal! 💼`)
+            .setDescription(`**VIP Yetkili:** ${executorMember} (${executor.tag})\n**Şanslı Üye:** ${newMember}\n**Durum:** Rol işlemi VIP onayıyla tamamlandı. Dağılabilirsiniz. 💼`)
             .setTimestamp();
         logGonder(newMember.guild, embed);
     } 
     else {
+        // İZİNSİZ KİŞİ ROL VERDİ! Cezasız kalmaz!
         try {
+            // 1. İşlemi geri al (Verilen rolü sil)
             await newMember.roles.set(oldMember.roles.cache);
 
+            // 2. Rol vermeye çalışan kişiye tekmeyi bas!
             if (executorMember.kickable) {
-                await executorMember.kick("İzinsiz başkasına rol verme girişimi (Guard Koruma)");
-            }
+                await executorMember.kick("Belirtilen özel role sahip olmadan rol dağıtma girişimi!");
 
-            const embed = new EmbedBuilder()
-                .setColor('#FF0000')
-                .setTitle('⛔ HOOOP! Orada Dur Bakalım!')
-                .setDescription(`**Kaçak Yönetici:** ${executorMember} (${executor.tag})\n**Hedef Üye:** ${newMember}\n**Olay:** Arkadaş kendisini patron sanıp rol dağıtmaya kalktı. \n**Cezası:** Verilen rol tıpış tıpış geri alındı, rolü veren kişi de sunucudan mancınıkla fırlatıldı! ✈️ İyi uçuşlar.`)
-                .setThumbnail(executorMember.user.displayAvatarURL())
-                .setFooter({ text: 'Bot abin affetmez.' })
-                .setTimestamp();
-            logGonder(newMember.guild, embed);
+                const embed = new EmbedBuilder()
+                    .setColor('#FF0000')
+                    .setTitle('⛔ HOOOP! Orada Dur Bakalım!')
+                    .setDescription(`**Haddini Aşan Yönetici/Üye:** ${executorMember} (${executor.tag})\n**Hedef Üye:** ${newMember}\n**Olay:** Arkadaş özel rolü olmamasına rağmen (belki de Admin'di) gizlice rol dağıtmaya kalktı.\n**Cezası:** Verilen rol tıpış tıpış geri alındı, rolü veren kişi de sunucudan mancınıkla fırlatıldı! ✈️ İyi uçuşlar.`)
+                    .setThumbnail(executorMember.user.displayAvatarURL())
+                    .setFooter({ text: 'Permin ne olursa olsun, Bot abin affetmez.' })
+                    .setTimestamp();
+                logGonder(newMember.guild, embed);
+            } else {
+                // Eğer atan kişi Sunucu Sahibiyse (Bot kurucuyu atamaz) sadece uyar ve rolü iptal et.
+                const embed = new EmbedBuilder()
+                    .setColor('#FF4500')
+                    .setTitle('👑 Kral Kuralları Çiğnedi!')
+                    .setDescription(`**Sınırı Aşan Kurucu/Üst Yetkili:** ${executorMember} (${executor.tag})\n**Hedef Üye:** ${newMember}\n**Olay:** Patron yetkisini kullanıp rol vermeye çalıştı. Özel rolü olmadığı için **verdiği rolü geri aldım**!\n**Not:** Discord kuralları gereği patronu sunucudan atamıyorum, ucuz yırttın! 🙄`)
+                    .setThumbnail(executorMember.user.displayAvatarURL())
+                    .setFooter({ text: 'Kurallar herkes içindir.' })
+                    .setTimestamp();
+                logGonder(newMember.guild, embed);
+            }
         } catch (e) {
             console.log("[GUARD HATASI] Botun yetkisi yetmiyor olabilir:", e);
         }
