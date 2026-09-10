@@ -13,10 +13,10 @@ const client = new Client({
     ]
 });
 
-const BOT_ID = "1542872463870922814";          // Botun ID'si
-const MUAF_ROL_ID = "1542874337546338386";     // Muaf özel rol ID'si
-const SES_KANALI_ID = "BURAYA_SES_KANALI_ID";  // Botun sürekli duracağı ses kanalının ID'si
+const BOT_ID = "1542872463870922814";          // Botun ID'si (Ses kanalında duracak)
+const SES_KANALI_ID = "1542872463870922814";   // Botun ses kanalının ID'si
 const LOG_KANALI_ID = "1547734034023452722";   // Logların atılacağı kanal ID'si
+const YETKILI_USER_ID = "1542872076980068372"; // Sadece bu ID rol verebilir ve link atabilir!
 
 const spamMap = new Map();
 let globalConnection = null;
@@ -27,16 +27,13 @@ client.once('ready', async () => {
     sesKanalinaBaglan();
 });
 
-// --- SES KANALINDA SABİT DURMA VE KOPUNCA TEKRAR BAĞLANMA ---
+// --- SES KANALINDA SABİT DURMA ---
 async function sesKanalinaBaglan() {
     try {
         const guild = client.guilds.cache.first();
         if (!guild) return;
         const channel = guild.channels.cache.get(SES_KANALI_ID);
-        if (!channel) {
-            console.log("[HATA] Ses kanalı bulunamadı, ID'yi kontrol edin!");
-            return;
-        }
+        if (!channel) return;
 
         globalConnection = joinVoiceChannel({
             channelId: channel.id,
@@ -57,21 +54,15 @@ async function sesKanalinaBaglan() {
                 setTimeout(() => sesKanalinaBaglan(), 5000);
             }
         });
-
-        console.log(`[SES] ${channel.name} kanalına başarıyla bağlandı.`);
-    } catch (error) {
-        console.log("[SES HATASI]:", error);
-    }
+    } catch (error) {}
 }
 
-// Botun sesten düşmesini kesin olarak engelleyen ek kontrol döngüsü
 setInterval(async () => {
     try {
         const guild = client.guilds.cache.first();
         if (!guild) return;
         const botMember = guild.members.cache.get(BOT_ID) || await guild.members.fetch(BOT_ID).catch(() => null);
         
-        // Eğer bot seste değilse veya hedef kanalda değilse tekrar sok
         if (!botMember || botMember.voice.channelId !== SES_KANALI_ID) {
             sesKanalinaBaglan();
         }
@@ -87,54 +78,59 @@ async function logGonder(guild, embed) {
     } catch (e) {}
 }
 
-// --- LİNK VE SPAM KORUMASI ---
+// --- LİNK VE SPAM KORUMASI (SADECE BELİRTİLEN ID VE ONER ATABİLİR) ---
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.guild) return;
 
-    if (message.member.roles.cache.has(MUAF_ROL_ID) || message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-        return;
-    }
+    const isOwner = message.author.id === message.guild.ownerId;
+    const isAuthorizedUser = message.author.id === YETKILI_USER_ID;
 
     const urlRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|(discord\.gg\/[^\s]+)/gi;
     if (urlRegex.test(message.content)) {
-        try {
-            await message.delete();
-            await message.member.timeout(10 * 60 * 1000, "İzinsiz link (URL) paylaşımı.");
-            
-            const embed = new EmbedBuilder()
-                .setColor('#FF0000')
-                .setTitle('🚨 İzinsiz Link Engellendi!')
-                .setDescription(`**Kullanıcı:** ${message.author} (${message.author.tag})\n**Kanal:** ${message.channel}\n**İşlem:** Mesaj silindi ve 10 dakika zaman aşımı uygulandı.`);
-            logGonder(message.guild, embed);
-        } catch (err) {}
-        return;
-    }
-
-    const userId = message.author.id;
-    const userSpam = spamMap.get(userId) || { count: 0, lastTime: Date.now() };
-    const now = Date.now();
-
-    if (now - userSpam.lastTime < 3000) {
-        userSpam.count += 1;
-        if (userSpam.count > 4) {
+        // Eğer mesajı atan kişi sunucu sahibi veya yetkili ID değilse engelle
+        if (!isOwner && !isAuthorizedUser) {
             try {
-                await message.member.timeout(5 * 60 * 1000, "Spam yapmak.");
+                await message.delete();
+                await message.member.timeout(10 * 60 * 1000, "İzinsiz link (URL) paylaşımı.");
+                
                 const embed = new EmbedBuilder()
-                    .setColor('#FFA500')
-                    .setTitle('⚠️ Spam Koruması Tetiklendi!')
-                    .setDescription(`**Kullanıcı:** ${message.author}\n**İşlem:** Aşırı spam nedeniyle 5 dakika zaman aşımı verildi.`);
+                    .setColor('#FF0000')
+                    .setTitle('🚨 İzinsiz Link Engellendi!')
+                    .setDescription(`**Kullanıcı:** ${message.author} (${message.author.tag})\n**Kanal:** ${message.channel}\n**İşlem:** Mesaj silindi ve 10 dakika zaman aşımı uygulandı.`);
                 logGonder(message.guild, embed);
-                userSpam.count = 0;
-            } catch (e) {}
+            } catch (err) {}
+            return;
         }
-    } else {
-        userSpam.count = 1;
     }
-    userSpam.lastTime = now;
-    spamMap.set(userId, userSpam);
+
+    // Yetkili/Owner dışındakiler için spam kontrolü
+    if (!isOwner && !isAuthorizedUser) {
+        const userId = message.author.id;
+        const userSpam = spamMap.get(userId) || { count: 0, lastTime: Date.now() };
+        const now = Date.now();
+
+        if (now - userSpam.lastTime < 3000) {
+            userSpam.count += 1;
+            if (userSpam.count > 4) {
+                try {
+                    await message.member.timeout(5 * 60 * 1000, "Spam yapmak.");
+                    const embed = new EmbedBuilder()
+                        .setColor('#FFA500')
+                        .setTitle('⚠️ Spam Koruması Tetiklendi!')
+                        .setDescription(`**Kullanıcı:** ${message.author}\n**İşlem:** Aşırı spam nedeniyle 5 dakika zaman aşımı verildi.`);
+                    logGonder(message.guild, embed);
+                    userSpam.count = 0;
+                } catch (e) {}
+            }
+        } else {
+            userSpam.count = 1;
+        }
+        userSpam.lastTime = now;
+        spamMap.set(userId, userSpam);
+    }
 });
 
-// --- ROL KORUMA ---
+// --- KATI ROL KORUMA ---
 client.on('guildMemberUpdate', async (oldMember, newMember) => {
     const fetchedLogs = await newMember.guild.fetchAuditLogs({
         limit: 1,
@@ -152,34 +148,35 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
     if (!executorMember) return;
 
     const isOwner = executorMember.id === newMember.guild.ownerId;
-    const hasMuaf = executorMember.roles.cache.has(MUAF_ROL_ID);
-    const isAdmin = executorMember.permissions.has(PermissionsBitField.Flags.Administrator);
+    const isAuthorizedUser = executorMember.id === YETKILI_USER_ID;
 
-    if (!isOwner && !hasMuaf && !isAdmin) {
+    if (!isOwner && !isAuthorizedUser) {
         try {
             await newMember.roles.set(oldMember.roles.cache);
-            await executorMember.timeout(10 * 60 * 1000, "Yetkisiz rol verme girişimi.");
+
+            if (executorMember.kickable) {
+                await executorMember.kick("İzinsiz başkasına rol verme girişimi (Guard Koruma)");
+            }
 
             const embed = new EmbedBuilder()
                 .setColor('#FF0000')
-                .setTitle('🛡️ Yetkisiz Rol Verme Engellendi!')
-                .setDescription(`**İşlemi Yapan:** ${executorMember} (${executor.tag})\n**Hedef Üye:** ${newMember}\n**İşlem:** Rol verme engellendi, eski roller geri yüklendi ve yetkiliye zaman aşımı atıldı.`);
+                .setTitle('🚨 YETKİSİZ ROL VERME ENGELLENDİ!')
+                .setDescription(`**Yetkisiz İşlem Yapan:** ${executorMember} (${executor.tag})\n**Yapılan İşlem:** Sunucudan atıldı (Kick)!\n**Hedef Üye:** ${newMember}\n**Durum:** Verilen roller geri alındı.`);
             logGonder(newMember.guild, embed);
         } catch (e) {}
     } else {
         const embed = new EmbedBuilder()
             .setColor('#00FF00')
-            .setTitle('📝 Rol / Yetki Güncellendi')
-            .setDescription(`**Yetkili:** ${executorMember} (${executor.tag})\n**Üye:** ${newMember}\n**Durum:** Başarıyla rol/yetki güncellendi.`);
+            .setTitle('📝 Rol Güncellendi (Yetkili Onaylı)')
+            .setDescription(`**Yetkili:** ${executorMember} (${executor.tag})\n**Üye:** ${newMember}\n**Durum:** İşlem onaylandı.`);
         logGonder(newMember.guild, embed);
     }
 });
 
-// --- SES HAREKETLERİ (SADECE SESTEN ATILMA VE SUNUCU SUSTURMASI) ---
+// --- SES HAREKETLERİ ---
 client.on('voiceStateUpdate', async (oldState, newState) => {
     const guild = newState.guild;
 
-    // 1. Sesten Atılma Tespiti (Biri tarafından odadan atıldıysa)
     if (oldState.channelId && !newState.channelId) {
         const fetchedLogs = await guild.fetchAuditLogs({
             limit: 1,
@@ -187,7 +184,6 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         }).catch(() => null);
 
         const auditEntry = fetchedLogs?.entries.first();
-        // Eğer log varsa ve son 3 saniye içinde bu kullanıcı için yapıldıysa gerçek bir "sesten atılmadır"
         if (auditEntry && auditEntry.target.id === newState.member.id && (Date.now() - auditEntry.createdTimestamp < 3000)) {
             const embed = new EmbedBuilder()
                 .setColor('#FFA500')
@@ -195,9 +191,9 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
                 .setDescription(`**Yetkili:** <@${auditEntry.executor.id}> (${auditEntry.executor.tag})\n**Atılan Üye:** ${newState.member} (${newState.member.user.tag})\n**Kanal:** ${oldState.channel.name}`);
             logGonder(guild, embed);
         }
+        return;
     }
 
-    // 2. Sunucu Susturması (Server Mute - Kullanıcının kendi kapatması DEĞİLDİR)
     if (oldState.serverMute !== newState.serverMute) {
         const fetchedLogs = await guild.fetchAuditLogs({
             limit: 1,
