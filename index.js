@@ -15,8 +15,11 @@ const client = new Client({
 
 const BOT_ID = "1542872463870922814";          // Botun ID'si (Ses kanalında duracak)
 const SES_KANALI_ID = "1542872463870922814";   // Botun ses kanalının ID'si
-const LOG_KANALI_ID = "1546239467033989210";   // Logların atılacağı güncel kanal ID'si
-const YETKILI_USER_ID = "1546239467033989210"; // Sadece bu ID rol verebilir ve link atabilir!
+const LOG_KANALI_ID = "1547734034023452722";   // Logların atılacağı doğru kanal ID'si
+
+// Sadece bu iki ID rol verebilir (Birinci kullanıcı ID'si ve ikinci rol ID'si)
+const YETKILI_USER_ID = "1542872076980068372"; 
+const YETKILI_ROL_ID = "1542874337546338386";     
 
 const spamMap = new Map();
 let globalConnection = null;
@@ -74,25 +77,22 @@ async function logGonder(guild, embed) {
         const logChannel = guild.channels.cache.get(LOG_KANALI_ID);
         if (logChannel) {
             await logChannel.send({ embeds: [embed] });
-        } else {
-            console.log("[HATA] Log kanalı bulunamadı! ID'yi kontrol edin:", LOG_KANALI_ID);
         }
-    } catch (e) {
-        console.log("[LOG GÖNDERME HATASI]:", e);
-    }
+    } catch (e) {}
 }
 
-// --- LİNK, SPAM (15 MESAJ) KORUMASI VE LOGLARI ---
+// --- LİNK VE 15 MESAJ SPAM KORUMASI ---
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.guild) return;
 
     const isOwner = message.author.id === message.guild.ownerId;
     const isAuthorizedUser = message.author.id === YETKILI_USER_ID;
+    const hasAuthorizedRole = message.member.roles.cache.has(YETKILI_ROL_ID);
 
     // 1. Link / URL Koruması
     const urlRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|(discord\.gg\/[^\s]+)/gi;
     if (urlRegex.test(message.content)) {
-        if (!isOwner && !isAuthorizedUser) {
+        if (!isOwner && !isAuthorizedUser && !hasAuthorizedRole) {
             try {
                 await message.delete();
                 await message.member.timeout(10 * 60 * 1000, "İzinsiz link (URL) paylaşımı.");
@@ -108,14 +108,14 @@ client.on('messageCreate', async (message) => {
     }
 
     // 2. Üst üste 15 mesaj spam koruması
-    if (!isOwner && !isAuthorizedUser) {
+    if (!isOwner && !isAuthorizedUser && !hasAuthorizedRole) {
         const userId = message.author.id;
         const userSpam = spamMap.get(userId) || { count: 0, lastTime: Date.now() };
         const now = Date.now();
 
-        if (now - userSpam.lastTime < 5000) { // 5 saniye içinde atılan mesajlar
+        if (now - userSpam.lastTime < 5000) {
             userSpam.count += 1;
-            if (userSpam.count >= 15) { // 15 mesaj sınırına ulaşınca
+            if (userSpam.count >= 15) {
                 try {
                     await message.member.timeout(10 * 60 * 1000, "Üst üste 15 mesaj (Spam) atma.");
                     const embed = new EmbedBuilder()
@@ -134,7 +134,7 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// --- ROL KORUMA VE KESİNTİSİZ ROL LOGLARI ---
+// --- ROL KORUMA (SADECE BELİRTİLEN 2 İSTİSNA ROL VEREBİLİR) ---
 client.on('guildMemberUpdate', async (oldMember, newMember) => {
     const fetchedLogs = await newMember.guild.fetchAuditLogs({
         limit: 1,
@@ -153,16 +153,17 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 
     const isOwner = executorMember.id === newMember.guild.ownerId;
     const isAuthorizedUser = executorMember.id === YETKILI_USER_ID;
+    const hasAuthorizedRole = executorMember.roles.cache.has(YETKILI_ROL_ID);
 
-    if (isOwner || isAuthorizedUser) {
-        // Yetkili kişi rol verdiyse/aldıysa sadece log düş
+    if (isOwner || isAuthorizedUser || hasAuthorizedRole) {
+        // İzin verilenler rol verdiyse log düş
         const embed = new EmbedBuilder()
             .setColor('#00FF00')
             .setTitle('📝 Rol Güncellendi (Yetkili Onaylı)')
             .setDescription(`**Yetkili:** ${executorMember} (${executor.tag})\n**Üye:** ${newMember}\n**Durum:** İşlem onaylandı.`);
         logGonder(newMember.guild, embed);
     } else {
-        // Yetkisiz biri rol verdiyse: Rollendirmeyi iptal et, kickle ve log düş!
+        // Başkası rol verdiyse: Rolü geri al, kickle ve log düş!
         try {
             await newMember.roles.set(oldMember.roles.cache);
 
@@ -179,17 +180,16 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
     }
 });
 
-// --- ÜYE GİRİŞ / ÇIKIŞ LOGLARI (ÜYE ALMA / ÜYE ATMA) ---
+// --- ÜYE GİRİŞ / ÇIKIŞ LOGLARI ---
 client.on('guildMemberAdd', async (member) => {
     const embed = new EmbedBuilder()
         .setColor('#00FF00')
-        .setTitle('📥 Sunucuya Yeni Üye Katıldı (Üye Alma)')
+        .setTitle('📥 Sunucuya Yeni Üye Katıldı')
         .setDescription(`**Üye:** ${member} (${member.user.tag})\n**ID:** ${member.id}`);
     logGonder(member.guild, embed);
 });
 
 client.on('guildMemberRemove', async (member) => {
-    // Üyenin kendi çıkması mı yoksa atılması/banlanması mı olduğunu denetim günlüğünden bulalım
     const fetchedLogs = await member.guild.fetchAuditLogs({
         limit: 1,
         type: AuditLogEvent.MemberKick,
@@ -209,7 +209,7 @@ client.on('guildMemberRemove', async (member) => {
     logGonder(member.guild, embed);
 });
 
-// --- SES HAREKETLERİ (SESTEN ATILMA VE SUSTURMA LOGLARI) ---
+// --- SES HAREKETLERİ ---
 client.on('voiceStateUpdate', async (oldState, newState) => {
     const guild = newState.guild;
 
