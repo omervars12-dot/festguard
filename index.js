@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, PermissionsBitField, AuditLogEvent, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, PermissionsBitField, AuditLogEvent, EmbedBuilder, ActionRowBuilder, UserSelectMenuBuilder, StringSelectMenuBuilder } = require('discord.js');
 const { joinVoiceChannel, entersState, VoiceConnectionStatus } = require('@discordjs/voice');
 require('dotenv').config();
 
@@ -17,11 +17,14 @@ const BOT_ID = "1542872463870922814";
 const SES_KANALI_ID = "1542872463870922814";   
 const LOG_KANALI_ID = "1547734034023452722";   
 
-// DİKTATÖR ROLÜ: SADECE ve SADECE bu role sahip olanlar işlem yapabilir!
+// VIP DİKTATÖR ROLÜ (Her şeyden muaf, panelin tek sahibi)
 const YETKILI_ROL_ID = "1542874337546338386";     
 
 const spamMap = new Map();
 let globalConnection = null;
+
+// GÜNLÜK BAN LİMİTİ TAKİBİ
+let dailyBans = { count: 0, date: new Date().toDateString() };
 
 client.once('ready', async () => {
     console.log(`[BAŞARILI] Bot aktif! Yargı dağıtmaya hazır: ${client.user.tag}`);
@@ -80,12 +83,34 @@ async function logGonder(guild, embed) {
     } catch (e) {}
 }
 
-// --- LİNK VE 10 MESAJ SPAM KORUMASI ---
+// --- MESAJLAR, SPAM VE GUARD PANEL KOMUTU ---
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.guild) return;
 
-    // Artık yetkili bypass'ı sadece TEK BİR ROL!
     const hasAuthorizedRole = message.member?.roles.cache.has(YETKILI_ROL_ID);
+
+    // 🎯 YENİ: GUARD PANEL KOMUTU (!guardpanel)
+    if (message.content === '!guardpanel') {
+        if (!hasAuthorizedRole) {
+            return message.reply({ content: "HOP! ⛔ Bu paneli açmak için VIP rozetin yok. Uza bakalım!" });
+        }
+
+        const embed = new EmbedBuilder()
+            .setColor('#2B2D31')
+            .setTitle('🛡️ Gardiyan Yargı Paneli ⚖️')
+            .setDescription("Kimi içeri atıyoruz patron?\n\nAşağıdaki menüden birini seçerek ona **28 güne (1 ay) kadar** soğuk su terapisi (Timeout) uygulayabilirsin. Acımak yok!")
+            .setThumbnail(client.user.displayAvatarURL())
+            .setFooter({ text: 'Sadece VIP yetkililere özeldir.' });
+
+        const userSelect = new UserSelectMenuBuilder()
+            .setCustomId('guard_panel_user')
+            .setPlaceholder('Kurbanı seçmek için tıkla... 🕵️‍♂️');
+
+        const row = new ActionRowBuilder().addComponents(userSelect);
+
+        await message.channel.send({ embeds: [embed], components: [row] });
+        return;
+    }
 
     // 1. Link / URL Koruması
     const urlRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|(discord\.gg\/[^\s]+)/gi;
@@ -99,7 +124,7 @@ client.on('messageCreate', async (message) => {
                     .setColor('#FF0055')
                     .setTitle('🚨 Yakalandın! Kaçak Link Tespit Edildi!')
                     .setDescription(`**Vatandaş:** ${message.author} (${message.author.tag})\n**Olay Yeri:** ${message.channel}\n**Ceza:** Özel rozeti olmadığı için linki çöpe atıldı, kendisine 10 dakika buz tedavisi uygulandı. 🧊`)
-                    .setFooter({ text: 'Sadece VIP rol link atabilir.', iconURL: client.user.displayAvatarURL() })
+                    .setFooter({ text: 'Sadece VIP rol link atabilir.' })
                     .setTimestamp();
                 logGonder(message.guild, embed);
             } catch (err) {}
@@ -107,7 +132,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 2. Üst üste 10 mesaj spam koruması (ve mesaj silme)
+    // 2. Üst üste 10 mesaj spam koruması
     if (!hasAuthorizedRole) {
         const userId = message.author.id;
         const userSpam = spamMap.get(userId) || { count: 0, lastTime: Date.now(), messages: [] };
@@ -125,8 +150,7 @@ client.on('messageCreate', async (message) => {
                     const embed = new EmbedBuilder()
                         .setColor('#FFAA00')
                         .setTitle('🛑 Klavyeyi Yavaşça Yere Bırak!')
-                        .setDescription(`**Hız Tutkunu:** ${message.author} (${message.author.tag})\n**Olay:** Arkadaş VIP rolü olmadan klavyede ralli yaptı. \n**Sonuç:** Attığı **${userSpam.messages.length}** mesaj silindi ve 10 dakika mola verildi. 🧘‍♂️`)
-                        .setFooter({ text: 'Spam sevmiyoruz canım.', iconURL: client.user.displayAvatarURL() })
+                        .setDescription(`**Hız Tutkunu:** ${message.author}\n**Olay:** Arkadaş VIP rolü olmadan klavyede ralli yaptı. \n**Sonuç:** Attığı **${userSpam.messages.length}** mesaj silindi ve 10 dakika mola verildi. 🧘‍♂️`)
                         .setTimestamp();
                     logGonder(message.guild, embed);
                     
@@ -143,18 +167,73 @@ client.on('messageCreate', async (message) => {
     }
 });
 
+// --- GUARD PANEL ETKİLEŞİMLERİ (Menü Seçimleri) ---
+client.on('interactionCreate', async interaction => {
+    if (!interaction.isUserSelectMenu() && !interaction.isStringSelectMenu()) return;
+
+    // Sadece VIP rol kullanabilir
+    const hasAuthorizedRole = interaction.member?.roles.cache.has(YETKILI_ROL_ID);
+    if (!hasAuthorizedRole) {
+        return interaction.reply({ content: "HOP! ⛔ Bu düğmeler senin boyunu aşar, dokunma!", ephemeral: true });
+    }
+
+    // Kişi seçildiğinde süre menüsünü yolla
+    if (interaction.customId === 'guard_panel_user') {
+        const targetId = interaction.values[0];
+        
+        const durationSelect = new StringSelectMenuBuilder()
+            .setCustomId(`guard_panel_duration_${targetId}`)
+            .setPlaceholder('Ne kadar süre içeride kalacak? ⏳')
+            .addOptions([
+                { label: '10 Dakika', value: '10m', description: 'Kısa bir çay molası.', emoji: '☕' },
+                { label: '1 Saat', value: '1h', description: 'Biraz kafa dinlesin.', emoji: '🧘' },
+                { label: '1 Gün', value: '1d', description: 'Uyuyup uyansın, kendine gelsin.', emoji: '🛌' },
+                { label: '1 Hafta', value: '1w', description: 'Uzun bir tatile çıksın.', emoji: '🏖️' },
+                { label: '28 Gün (1 Ay)', value: '28d', description: 'Maksimum sınır. Müebbet sayılır!', emoji: '💀' }
+            ]);
+
+        const row = new ActionRowBuilder().addComponents(durationSelect);
+        await interaction.reply({ content: `✅ <@${targetId}> seçildi. Adamın cezasını (süresini) belirle:`, components: [row], ephemeral: true });
+    } 
+    // Süre seçildiğinde Timeout at
+    else if (interaction.customId.startsWith('guard_panel_duration_')) {
+        const targetId = interaction.customId.split('_')[3];
+        const duration = interaction.values[0];
+        
+        const targetMember = await interaction.guild.members.fetch(targetId).catch(() => null);
+        if (!targetMember) return interaction.reply({ content: "Sanık firar etmiş! (Sunucuda bulunamadı).", ephemeral: true });
+
+        let ms = 0; let text = "";
+        if (duration === '10m') { ms = 10 * 60 * 1000; text = "10 Dakika"; }
+        if (duration === '1h') { ms = 60 * 60 * 1000; text = "1 Saat"; }
+        if (duration === '1d') { ms = 24 * 60 * 60 * 1000; text = "1 Gün"; }
+        if (duration === '1w') { ms = 7 * 24 * 60 * 60 * 1000; text = "1 Hafta"; }
+        if (duration === '28d') { ms = 28 * 24 * 60 * 60 * 1000; text = "28 Gün (1 Ay)"; } // Discord sınırı 28 gündür.
+
+        try {
+            await targetMember.timeout(ms, `Guard Panel üzerinden ${interaction.user.tag} tarafından.`);
+            await interaction.update({ content: `⚖️ **ADALET YERİNİ BULDU!** <@${targetId}>, başarıyla **${text}** boyunca soğuk su terapisine gönderildi. 🧊`, components: [] });
+
+            const embed = new EmbedBuilder()
+                .setColor('#8A2BE2')
+                .setTitle('🎛️ Guard Panel Yargı Dağıttı!')
+                .setDescription(`**Vuran VIP:** ${interaction.user}\n**İçeri Atılan:** <@${targetId}>\n**Ceza Süresi:** ${text}\n**Sistem:** Modern Yargı Paneli üzerinden ceza kesildi! 🔨`)
+                .setTimestamp();
+            logGonder(interaction.guild, embed);
+        } catch (e) {
+            await interaction.update({ content: "❌ Tüh! Yetkim yetmedi. Sanırım bu kişinin yetkisi benden üstte.", components: [] });
+        }
+    }
+});
+
 // --- SIFIR TOLERANS ROL KORUMASI ---
 client.on('guildMemberUpdate', async (oldMember, newMember) => {
     await new Promise(resolve => setTimeout(resolve, 1500));
 
-    const fetchedLogs = await newMember.guild.fetchAuditLogs({
-        limit: 1,
-        type: AuditLogEvent.MemberRoleUpdate,
-    }).catch(() => null);
-
+    const fetchedLogs = await newMember.guild.fetchAuditLogs({ limit: 1, type: AuditLogEvent.MemberRoleUpdate }).catch(() => null);
     if (!fetchedLogs) return;
-    const auditEntry = fetchedLogs.entries.first();
     
+    const auditEntry = fetchedLogs.entries.first();
     if (!auditEntry || auditEntry.target.id !== newMember.id || (Date.now() - auditEntry.createdTimestamp > 5000)) return;
 
     const { executor } = auditEntry;
@@ -163,142 +242,85 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
     const executorMember = await newMember.guild.members.fetch(executor.id).catch(() => null);
     if (!executorMember) return;
 
-    // TEK KURAL: O meşhur role sahip mi? Admin veya kurucu olması umurumda değil!
     const hasAuthorizedRole = executorMember.roles.cache.has(YETKILI_ROL_ID);
 
-    if (hasAuthorizedRole) {
-        const embed = new EmbedBuilder()
-            .setColor('#00FF7F')
-            .setTitle('📜 Yasal İşlem Başarılı!')
-            .setDescription(`**VIP Yetkili:** ${executorMember} (${executor.tag})\n**Şanslı Üye:** ${newMember}\n**Durum:** Rol işlemi VIP onayıyla tamamlandı. Dağılabilirsiniz. 💼`)
-            .setTimestamp();
-        logGonder(newMember.guild, embed);
-    } 
-    else {
-        // İZİNSİZ KİŞİ ROL VERDİ! Cezasız kalmaz!
+    if (!hasAuthorizedRole) {
         try {
-            // 1. İşlemi geri al (Verilen rolü sil)
             await newMember.roles.set(oldMember.roles.cache);
-
-            // 2. Rol vermeye çalışan kişiye tekmeyi bas!
             if (executorMember.kickable) {
                 await executorMember.kick("Belirtilen özel role sahip olmadan rol dağıtma girişimi!");
 
                 const embed = new EmbedBuilder()
                     .setColor('#FF0000')
                     .setTitle('⛔ HOOOP! Orada Dur Bakalım!')
-                    .setDescription(`**Haddini Aşan Yönetici/Üye:** ${executorMember} (${executor.tag})\n**Hedef Üye:** ${newMember}\n**Olay:** Arkadaş özel rolü olmamasına rağmen (belki de Admin'di) gizlice rol dağıtmaya kalktı.\n**Cezası:** Verilen rol tıpış tıpış geri alındı, rolü veren kişi de sunucudan mancınıkla fırlatıldı! ✈️ İyi uçuşlar.`)
-                    .setThumbnail(executorMember.user.displayAvatarURL())
-                    .setFooter({ text: 'Permin ne olursa olsun, Bot abin affetmez.' })
-                    .setTimestamp();
-                logGonder(newMember.guild, embed);
-            } else {
-                // Eğer atan kişi Sunucu Sahibiyse (Bot kurucuyu atamaz) sadece uyar ve rolü iptal et.
-                const embed = new EmbedBuilder()
-                    .setColor('#FF4500')
-                    .setTitle('👑 Kral Kuralları Çiğnedi!')
-                    .setDescription(`**Sınırı Aşan Kurucu/Üst Yetkili:** ${executorMember} (${executor.tag})\n**Hedef Üye:** ${newMember}\n**Olay:** Patron yetkisini kullanıp rol vermeye çalıştı. Özel rolü olmadığı için **verdiği rolü geri aldım**!\n**Not:** Discord kuralları gereği patronu sunucudan atamıyorum, ucuz yırttın! 🙄`)
-                    .setThumbnail(executorMember.user.displayAvatarURL())
-                    .setFooter({ text: 'Kurallar herkes içindir.' })
+                    .setDescription(`**Haddini Aşan Yönetici:** ${executorMember}\n**Olay:** Arkadaş özel VIP rolü olmadan rol dağıtmaya kalktı.\n**Cezası:** Verilen rol iptal edildi, rolü veren kişi sunucudan tekmelendi! ✈️`)
                     .setTimestamp();
                 logGonder(newMember.guild, embed);
             }
-        } catch (e) {
-            console.log("[GUARD HATASI] Botun yetkisi yetmiyor olabilir:", e);
-        }
+        } catch (e) {}
     }
 });
 
-// --- ÜYE GİRİŞ / ÇIKIŞ LOGLARI ---
-client.on('guildMemberAdd', async (member) => {
-    const embed = new EmbedBuilder()
-        .setColor('#00FFFF')
-        .setTitle('📥 Mekana Yeni Biri Damladı!')
-        .setDescription(`**Gelen Gideni Aratmaz Umarım:** ${member} (${member.user.tag})\n**Kimlik (ID):** ${member.id}\nÇayları tazeleyin, yeni üyemiz geldi! ☕`)
-        .setThumbnail(member.user.displayAvatarURL())
-        .setTimestamp();
-    logGonder(member.guild, embed);
-});
-
-client.on('guildMemberRemove', async (member) => {
-    const fetchedLogs = await member.guild.fetchAuditLogs({
-        limit: 1,
-        type: AuditLogEvent.MemberKick,
-    }).catch(() => null);
-
-    const auditEntry = fetchedLogs?.entries.first();
-    let aciklama = `**Giden:** ${member} (${member.user.tag})\nBavulunu topladı ve aramızdan sessizce ayrıldı. Yolun açık olsun! 🚶‍♂️`;
-
-    if (auditEntry && auditEntry.target.id === member.id && (Date.now() - auditEntry.createdTimestamp < 5000)) {
-        aciklama = `**Şutlanan:** ${member} (${member.user.tag})\n**Şutlayan Yetkili:** <@${auditEntry.executor.id}> (${auditEntry.executor.tag})\nArkadaşa tekme tokat girişip kapı dışarı ettiler. 👋`;
-    }
-
-    const embed = new EmbedBuilder()
-        .setColor('#8B0000')
-        .setTitle('📤 Bir Yıldız Daha Kaydı...')
-        .setDescription(aciklama)
-        .setTimestamp();
-    logGonder(member.guild, embed);
-});
-
-// --- SES HAREKETLERİ ---
-client.on('voiceStateUpdate', async (oldState, newState) => {
-    const guild = newState.guild;
-
-    if (oldState.channelId && !newState.channelId) {
-        const fetchedLogs = await guild.fetchAuditLogs({
-            limit: 1,
-            type: AuditLogEvent.MemberDisconnect,
-        }).catch(() => null);
-
-        const auditEntry = fetchedLogs?.entries.first();
-        if (auditEntry && auditEntry.target.id === newState.member.id && (Date.now() - auditEntry.createdTimestamp < 3000)) {
-            const embed = new EmbedBuilder()
-                .setColor('#FF4500')
-                .setTitle('🥾 Sesten Şutlandı!')
-                .setDescription(`**Yetkili:** <@${auditEntry.executor.id}>\n**Kovulan:** ${newState.member}\n**Kanal:** ${oldState.channel.name}\nBiri sesten yaka paça dışarı atıldı!`)
-                .setTimestamp();
-            logGonder(guild, embed);
-        }
-        return;
-    }
-
-    if (oldState.serverMute !== newState.serverMute) {
-        const fetchedLogs = await guild.fetchAuditLogs({
-            limit: 1,
-            type: AuditLogEvent.MemberUpdate,
-        }).catch(() => null);
-
-        const auditEntry = fetchedLogs?.entries.first();
-        const executor = auditEntry?.executor || { id: 'Bilinmiyor', tag: 'Bilinmiyor' };
-
-        if (newState.serverMute) {
-            const embed = new EmbedBuilder()
-                .setColor('#DC143C')
-                .setTitle('🤐 Fişi Çekildi (Susturuldu)')
-                .setDescription(`**Fişi Çeken:** <@${executor.id}>\n**Susturulan:** ${newState.member}\nBiri fazla konuştu galiba, mikrofonun kablosunu kestiler. ✂️`)
-                .setTimestamp();
-            logGonder(guild, embed);
-        } else {
-            const embed = new EmbedBuilder()
-                .setColor('#32CD32')
-                .setTitle('🎤 Fişi Takıldı (Susturma Açıldı)')
-                .setDescription(`**Affeden Yetkili:** <@${executor.id}>\n**Konuşma Hakkı Kazanan:** ${newState.member}\nBantları söktük, hadi yine iyisin!`)
-                .setTimestamp();
-            logGonder(guild, embed);
-        }
-    }
-});
-
-// --- ZAMAN AŞIMI (TIMEOUT) LOGLARI ---
+// --- GÜNLÜK MAX 2 BAN KORUMASI ---
 client.on('guildAuditLogEntryCreate', async (auditLog, guild) => {
+    // Timeout logları
     if (auditLog.action === AuditLogEvent.MemberUpdate) {
         const timeoutChange = auditLog.changes.find(c => c.key === 'communication_disabled_until');
         if (timeoutChange) {
             const embed = new EmbedBuilder()
                 .setColor('#8A2BE2')
                 .setTitle(timeoutChange.new ? '🛋️ Soğuk Su Terapisi Başladı!' : '🕊️ Özgürlüğüne Kavuştu!')
-                .setDescription(`**Yargıç:** <@${auditLog.executor.id}>\n**Sanık:** <@${auditLog.target.id}>\n**Durum:** ${timeoutChange.new ? `Buzdolabına kilitlendi. Bitiş: ${new Date(timeoutChange.new).toLocaleString()}` : 'Cezası bitti, aramıza döndü.'}`)
+                .setDescription(`**Yargıç:** <@${auditLog.executor.id}>\n**Sanık:** <@${auditLog.target.id}>\n**Durum:** ${timeoutChange.new ? `Süre sonu: ${new Date(timeoutChange.new).toLocaleString()}` : 'Cezası bitti, aramıza döndü.'}`)
+                .setTimestamp();
+            logGonder(guild, embed);
+        }
+    }
+
+    // Ban Koruması
+    if (auditLog.action === AuditLogEvent.MemberBanAdd) {
+        const executorMember = await guild.members.fetch(auditLog.executor.id).catch(() => null);
+        if (!executorMember || executorMember.user.bot) return;
+
+        const hasAuthorizedRole = executorMember.roles.cache.has(YETKILI_ROL_ID);
+        
+        // VIP Yetkili ban sınırı tanımaz, pas geç
+        if (hasAuthorizedRole) return; 
+
+        // Günü kontrol et, eğer yeni güne geçildiyse sayacı sıfırla
+        const today = new Date().toDateString();
+        if (dailyBans.date !== today) {
+            dailyBans = { count: 0, date: today };
+        }
+
+        dailyBans.count++;
+
+        // Eğer 2'yi geçerse (3. banı atmaya kalkarsa)
+        if (dailyBans.count > 2) {
+            try {
+                // 1. Atılan banı geri aç
+                await guild.members.unban(auditLog.target.id, "Günlük Ban Sınırı Aşıldı (Max 2)");
+
+                // 2. Banlayan yetkiliyi cezalandır (Sunucudan at)
+                if (executorMember.kickable) {
+                    await executorMember.kick("Günde 2 kişiden fazla ban atma girişimi (Limit Aşımı)");
+                }
+
+                const embed = new EmbedBuilder()
+                    .setColor('#FF0000')
+                    .setTitle('🚨 BAN LİMİTİ AŞILDI (MAX 2)')
+                    .setDescription(`**Çılgın Yetkili:** ${executorMember}\n**Olay:** Arkadaş günde 2'den fazla adam banlamaya çalıştı. Limitleri aştığı için **attığı banı geri çektim ve kendisini sunucudan kovdum!** 🔨\n*Not: Özel VIP rolü olanlar bu kuraldan muaftır.*`)
+                    .setThumbnail(executorMember.user.displayAvatarURL())
+                    .setTimestamp();
+                logGonder(guild, embed);
+            } catch (e) {
+                console.log("[GUARD HATA] Limit aşıldı ama yetki yetmedi.");
+            }
+        } else {
+            // Sınırı aşmadıysa sadece kaçıncı hakkını kullandığını logla
+            const embed = new EmbedBuilder()
+                .setColor('#FF4500')
+                .setTitle('🔨 Birine Ban Çakıldı!')
+                .setDescription(`**Yetkili:** ${executorMember}\n**Banlanan:** <@${auditLog.target.id}>\n**Günlük Kullanılan Ban Hakkı:** ${dailyBans.count}/2 ⚠️`)
                 .setTimestamp();
             logGonder(guild, embed);
         }
