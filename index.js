@@ -16,7 +16,8 @@ const client = new Client({
 const BOT_ID = "1542872463870922814";          // Botun ID'si (Ses kanalında duracak)
 const SES_KANALI_ID = "1542872463870922814";   // Botun ses kanalının ID'si
 const LOG_KANALI_ID = "1547734034023452722";   // Logların atılacağı kanal ID'si
-const YETKILI_USER_ID = "1542872076980068372"; // Sadece bu ID rol verebilir ve link atabilir!
+const YETKILI_USER_ID = "1542872076980068372"; // Sadece bu ID tam yetkilidir (Link ve cezasız rol verme)
+const MUAF_ROL_ID = "1542874337546338386";     // Bu role sahip olanlar ceza almaz ama her yaptığı loglanır!
 
 const spamMap = new Map();
 let globalConnection = null;
@@ -78,7 +79,7 @@ async function logGonder(guild, embed) {
     } catch (e) {}
 }
 
-// --- LİNK VE SPAM KORUMASI (SADECE BELİRTİLEN ID VE ONER ATABİLİR) ---
+// --- LİNK VE SPAM KORUMASI (HER DURUMDA LOG DÜŞER) ---
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.guild) return;
 
@@ -87,7 +88,6 @@ client.on('messageCreate', async (message) => {
 
     const urlRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|(discord\.gg\/[^\s]+)/gi;
     if (urlRegex.test(message.content)) {
-        // Eğer mesajı atan kişi sunucu sahibi veya yetkili ID değilse engelle
         if (!isOwner && !isAuthorizedUser) {
             try {
                 await message.delete();
@@ -130,7 +130,7 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// --- KATI ROL KORUMA ---
+// --- ROL KORUMA VE KESİNTİSİZ LOGLAMA ---
 client.on('guildMemberUpdate', async (oldMember, newMember) => {
     const fetchedLogs = await newMember.guild.fetchAuditLogs({
         limit: 1,
@@ -149,8 +149,17 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 
     const isOwner = executorMember.id === newMember.guild.ownerId;
     const isAuthorizedUser = executorMember.id === YETKILI_USER_ID;
+    const hasMuafRole = executorMember.roles.cache.has(MUAF_ROL_ID);
 
-    if (!isOwner && !isAuthorizedUser) {
+    // Eğer yapan kişi Owner, Belirtilen Yetkili ID veya Muaf Role sahipse ceza almaz, işlemi geçerlidir.
+    if (isOwner || isAuthorizedUser || hasMuafRole) {
+        const embed = new EmbedBuilder()
+            .setColor('#00FF00')
+            .setTitle('📝 Rol Güncellendi (Yetkili/Muaf İşlemi)')
+            .setDescription(`**Yetkili:** ${executorMember} (${executor.tag})\n**Üye:** ${newMember}\n**Durum:** İşlem onaylandı ve loglandı.`);
+        logGonder(newMember.guild, embed);
+    } else {
+        // Bu kişiler dışındakiler rol verirse: Rol geri alınır, kicklenir ve kesinlikle loglanır.
         try {
             await newMember.roles.set(oldMember.roles.cache);
 
@@ -164,12 +173,6 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
                 .setDescription(`**Yetkisiz İşlem Yapan:** ${executorMember} (${executor.tag})\n**Yapılan İşlem:** Sunucudan atıldı (Kick)!\n**Hedef Üye:** ${newMember}\n**Durum:** Verilen roller geri alındı.`);
             logGonder(newMember.guild, embed);
         } catch (e) {}
-    } else {
-        const embed = new EmbedBuilder()
-            .setColor('#00FF00')
-            .setTitle('📝 Rol Güncellendi (Yetkili Onaylı)')
-            .setDescription(`**Yetkili:** ${executorMember} (${executor.tag})\n**Üye:** ${newMember}\n**Durum:** İşlem onaylandı.`);
-        logGonder(newMember.guild, embed);
     }
 });
 
