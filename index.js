@@ -13,11 +13,11 @@ const client = new Client({
     ]
 });
 
-const BOT_ID = "1542872463870922814";          // Botun ID'si (Ses kanalında duracak)
-const SES_KANALI_ID = "1542872463870922814";   // Botun ses kanalının ID'si
-const LOG_KANALI_ID = "1547734034023452722";   // Logların atılacağı doğru kanal ID'si
+const BOT_ID = "1542872463870922814";          
+const SES_KANALI_ID = "1542872463870922814";   
+const LOG_KANALI_ID = "1547734034023452722";   
 
-// Sadece bu iki ID rol verebilir (Birinci kullanıcı ID'si ve ikinci rol ID'si)
+// MUAFİYETLER: Sadece bu kişi ve bu role sahip olanlar rol verebilir / link atabilir
 const YETKILI_USER_ID = "1542872076980068372"; 
 const YETKILI_ROL_ID = "1542874337546338386";     
 
@@ -87,7 +87,7 @@ client.on('messageCreate', async (message) => {
 
     const isOwner = message.author.id === message.guild.ownerId;
     const isAuthorizedUser = message.author.id === YETKILI_USER_ID;
-    const hasAuthorizedRole = message.member.roles.cache.has(YETKILI_ROL_ID);
+    const hasAuthorizedRole = message.member?.roles.cache.has(YETKILI_ROL_ID);
 
     // 1. Link / URL Koruması
     const urlRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|(discord\.gg\/[^\s]+)/gi;
@@ -121,7 +121,7 @@ client.on('messageCreate', async (message) => {
                     const embed = new EmbedBuilder()
                         .setColor('#FFA500')
                         .setTitle('⚠️ Üst Üste 15 Mesaj Spam Koruması!')
-                        .setDescription(`**Kullanıcı:** ${message.author} (${message.author.tag})\n**İşlem:** Hızlı mesaj spamı nedeniyle 10 dakika zaman aşımı (timeout) verildi.`);
+                        .setDescription(`**Kullanıcı:** ${message.author} (${message.author.tag})\n**İşlem:** Hızlı mesaj spamı nedeniyle 10 dakika zaman aşımı verildi.`);
                     logGonder(message.guild, embed);
                     userSpam.count = 0;
                 } catch (e) {}
@@ -134,8 +134,11 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// --- ROL KORUMA (SADECE BELİRTİLEN 2 İSTİSNA ROL VEREBİLİR) ---
+// --- ROL KORUMA (KESİN ÇÖZÜM İÇİN GECİKME EKLENDİ) ---
 client.on('guildMemberUpdate', async (oldMember, newMember) => {
+    // Audit Log'un Discord veritabanına düşmesi için 1.5 saniye bekle
+    await new Promise(resolve => setTimeout(resolve, 1500));
+
     const fetchedLogs = await newMember.guild.fetchAuditLogs({
         limit: 1,
         type: AuditLogEvent.MemberRoleUpdate,
@@ -143,7 +146,9 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 
     if (!fetchedLogs) return;
     const auditEntry = fetchedLogs.entries.first();
-    if (!auditEntry || auditEntry.target.id !== newMember.id) return;
+    
+    // Eğer log yoksa veya süresi 5 saniyeden eskiyse es geç
+    if (!auditEntry || auditEntry.target.id !== newMember.id || (Date.now() - auditEntry.createdTimestamp > 5000)) return;
 
     const { executor } = auditEntry;
     if (executor.bot) return;
@@ -155,28 +160,34 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
     const isAuthorizedUser = executorMember.id === YETKILI_USER_ID;
     const hasAuthorizedRole = executorMember.roles.cache.has(YETKILI_ROL_ID);
 
+    // Muaf olanlardan biriyse sorun yok, sadece log tut
     if (isOwner || isAuthorizedUser || hasAuthorizedRole) {
-        // İzin verilenler rol verdiyse log düş
         const embed = new EmbedBuilder()
             .setColor('#00FF00')
             .setTitle('📝 Rol Güncellendi (Yetkili Onaylı)')
-            .setDescription(`**Yetkili:** ${executorMember} (${executor.tag})\n**Üye:** ${newMember}\n**Durum:** İşlem onaylandı.`);
+            .setDescription(`**Yetkili:** ${executorMember} (${executor.tag})\n**Üye:** ${newMember}\n**Durum:** İşlem yetkili/muaf tarafından yapıldı.`);
         logGonder(newMember.guild, embed);
-    } else {
-        // Başkası rol verdiyse: Rolü geri al, kickle ve log düş!
+    } 
+    // MUAF DEĞİLSE CEZA KES VE GERİ AL!
+    else {
         try {
+            // 1. Rolü geri al (eski haline getir)
             await newMember.roles.set(oldMember.roles.cache);
 
+            // 2. Rol vermeye çalışan kişiyi sunucudan KICK'le
             if (executorMember.kickable) {
                 await executorMember.kick("İzinsiz başkasına rol verme girişimi (Guard Koruma)");
             }
 
+            // 3. Uyarı logunu gönder
             const embed = new EmbedBuilder()
                 .setColor('#FF0000')
                 .setTitle('🚨 YETKİSİZ ROL VERME ENGELLENDİ!')
                 .setDescription(`**Yetkisiz İşlem Yapan:** ${executorMember} (${executor.tag})\n**Yapılan İşlem:** Sunucudan atıldı (Kick)!\n**Hedef Üye:** ${newMember}\n**Durum:** Verilen roller geri alındı.`);
             logGonder(newMember.guild, embed);
-        } catch (e) {}
+        } catch (e) {
+            console.log("[GUARD HATASI] Botun yetkisi yetmiyor olabilir:", e);
+        }
     }
 });
 
