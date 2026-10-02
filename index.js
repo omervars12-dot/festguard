@@ -13,12 +13,12 @@ const client = new Client({
     ]
 });
 
-const BOT_ID = "1542872463870922814";          
+const BOT_ID = "1542872463870922814";        
 const SES_KANALI_ID = "1542872463870922814";   
 const LOG_KANALI_ID = "1547734034023452722";   
 
 // VIP DİKTATÖR ROLÜ (Her şeyden muaf, panelin tek sahibi)
-const YETKILI_ROL_ID = "1542874337546338386";     
+const YETKILI_ROL_ID = "1542874337546338386";      
 
 const spamMap = new Map();
 let globalConnection = null;
@@ -56,7 +56,7 @@ async function sesKanalinaBaglan() {
                 ]);
             } catch (error) {
                 if (globalConnection) globalConnection.destroy();
-                setTimeout(() => sesKanalinaBaglan(), 5000);
+                setTimeout(() => sesKanalinaBaglan(), 5_000);
             }
         });
     } catch (error) {}
@@ -83,13 +83,13 @@ async function logGonder(guild, embed) {
     } catch (e) {}
 }
 
-// --- MESAJLAR, SPAM VE GUARD PANEL KOMUTU ---
+// --- MESAJLAR, KÜFÜR, SPAM VE GUARD PANEL KOMUTU ---
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.guild) return;
 
     const hasAuthorizedRole = message.member?.roles.cache.has(YETKILI_ROL_ID);
 
-    // 🎯 YENİ: GUARD PANEL KOMUTU (!guardpanel)
+    // 🎯 GUARD PANEL KOMUTU (!guardpanel)
     if (message.content === '!guardpanel') {
         if (!hasAuthorizedRole) {
             return message.reply({ content: "HOP! ⛔ Bu paneli açmak için VIP rozetin yok. Uza bakalım!" });
@@ -112,7 +112,46 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // 1. Link / URL Koruması
+    // 1. ErenSI Tarzı Gelişmiş Küfür / Argo Koruması
+    if (!hasAuthorizedRole) {
+        // Türkçe karakterleri düzelt, boşlukları ve gizleme karakterlerini temizle
+        const temizMetin = message.content.toLowerCase()
+            .replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ş/g, 's')
+            .replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ç/g, 'c')
+            .replace(/[^a-z0-9]/g, ''); // Sembol ve boşlukları uçur
+
+        const yasakliKelimeler = [
+            'amk', 'aq', 'amq', 'sik', 'siktir', 'orospu', 'orospucocugu', 
+            'oevladi', 'pic', 'got', 'yarrak', 'yarak', 'ibne', 'anani', 
+            'amcik', 'kahpe', 'orospi', 'sikik', 'sikis', 'siker', 'ananin', 
+            'avradini', 'ananinkami', 'gotveren', 'pezevenk', 'orosbunun',
+            'orosbucocugu', 'sikisken', 'amcikoglusu', 'yarrakbasi'
+        ];
+
+        // Boşluklu/taktikli yazımları yakalamak için orijinal metnin de boşluksuz halini kontrol et
+        const normalTemizMetin = message.content.toLowerCase().replace(/\s+/g, '');
+
+        const kufurVarMi = yasakliKelimeler.some(kelime => 
+            temizMetin.includes(kelime) || normalTemizMetin.includes(kelime)
+        );
+
+        if (kufurVarMi) {
+            try {
+                await message.delete();
+                await message.member.timeout(10 * 60 * 1000, "Küfür ve argo kullanımı.");
+                
+                const embed = new EmbedBuilder()
+                    .setColor('#FF0055')
+                    .setTitle('🛡️ Küfür Filtresi Devrede!')
+                    .setDescription(`**Vatandaş:** ${message.author} (${message.author.tag})\n**Olay Yeri:** ${message.channel}\n**Ceza:** Küfür/argo tespit edildiği için mesajı silindi ve kendisine **10 dakika** soğuk su tedavisi uygulandı. 🧊`)
+                    .setTimestamp();
+                logGonder(message.guild, embed);
+            } catch (err) {}
+            return;
+        }
+    }
+
+    // 2. Link / URL Koruması
     const urlRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|(discord\.gg\/[^\s]+)/gi;
     if (urlRegex.test(message.content)) {
         if (!hasAuthorizedRole) {
@@ -132,7 +171,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // 2. Üst üste 10 mesaj spam koruması
+    // 3. Üst üste 10 mesaj spam koruması
     if (!hasAuthorizedRole) {
         const userId = message.author.id;
         const userSpam = spamMap.get(userId) || { count: 0, lastTime: Date.now(), messages: [] };
@@ -171,13 +210,11 @@ client.on('messageCreate', async (message) => {
 client.on('interactionCreate', async interaction => {
     if (!interaction.isUserSelectMenu() && !interaction.isStringSelectMenu()) return;
 
-    // Sadece VIP rol kullanabilir
     const hasAuthorizedRole = interaction.member?.roles.cache.has(YETKILI_ROL_ID);
     if (!hasAuthorizedRole) {
         return interaction.reply({ content: "HOP! ⛔ Bu düğmeler senin boyunu aşar, dokunma!", ephemeral: true });
     }
 
-    // Kişi seçildiğinde süre menüsünü yolla
     if (interaction.customId === 'guard_panel_user') {
         const targetId = interaction.values[0];
         
@@ -195,7 +232,6 @@ client.on('interactionCreate', async interaction => {
         const row = new ActionRowBuilder().addComponents(durationSelect);
         await interaction.reply({ content: `✅ <@${targetId}> seçildi. Adamın cezasını (süresini) belirle:`, components: [row], ephemeral: true });
     } 
-    // Süre seçildiğinde Timeout at
     else if (interaction.customId.startsWith('guard_panel_duration_')) {
         const targetId = interaction.customId.split('_')[3];
         const duration = interaction.values[0];
@@ -208,7 +244,7 @@ client.on('interactionCreate', async interaction => {
         if (duration === '1h') { ms = 60 * 60 * 1000; text = "1 Saat"; }
         if (duration === '1d') { ms = 24 * 60 * 60 * 1000; text = "1 Gün"; }
         if (duration === '1w') { ms = 7 * 24 * 60 * 60 * 1000; text = "1 Hafta"; }
-        if (duration === '28d') { ms = 28 * 24 * 60 * 60 * 1000; text = "28 Gün (1 Ay)"; } // Discord sınırı 28 gündür.
+        if (duration === '28d') { ms = 28 * 24 * 60 * 60 * 1000; text = "28 Gün (1 Ay)"; }
 
         try {
             await targetMember.timeout(ms, `Guard Panel üzerinden ${interaction.user.tag} tarafından.`);
@@ -263,7 +299,6 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 
 // --- GÜNLÜK MAX 2 BAN KORUMASI ---
 client.on('guildAuditLogEntryCreate', async (auditLog, guild) => {
-    // Timeout logları
     if (auditLog.action === AuditLogEvent.MemberUpdate) {
         const timeoutChange = auditLog.changes.find(c => c.key === 'communication_disabled_until');
         if (timeoutChange) {
@@ -276,17 +311,13 @@ client.on('guildAuditLogEntryCreate', async (auditLog, guild) => {
         }
     }
 
-    // Ban Koruması
     if (auditLog.action === AuditLogEvent.MemberBanAdd) {
         const executorMember = await guild.members.fetch(auditLog.executor.id).catch(() => null);
         if (!executorMember || executorMember.user.bot) return;
 
         const hasAuthorizedRole = executorMember.roles.cache.has(YETKILI_ROL_ID);
-        
-        // VIP Yetkili ban sınırı tanımaz, pas geç
         if (hasAuthorizedRole) return; 
 
-        // Günü kontrol et, eğer yeni güne geçildiyse sayacı sıfırla
         const today = new Date().toDateString();
         if (dailyBans.date !== today) {
             dailyBans = { count: 0, date: today };
@@ -294,13 +325,10 @@ client.on('guildAuditLogEntryCreate', async (auditLog, guild) => {
 
         dailyBans.count++;
 
-        // Eğer 2'yi geçerse (3. banı atmaya kalkarsa)
         if (dailyBans.count > 2) {
             try {
-                // 1. Atılan banı geri aç
                 await guild.members.unban(auditLog.target.id, "Günlük Ban Sınırı Aşıldı (Max 2)");
 
-                // 2. Banlayan yetkiliyi cezalandır (Sunucudan at)
                 if (executorMember.kickable) {
                     await executorMember.kick("Günde 2 kişiden fazla ban atma girişimi (Limit Aşımı)");
                 }
@@ -316,7 +344,6 @@ client.on('guildAuditLogEntryCreate', async (auditLog, guild) => {
                 console.log("[GUARD HATA] Limit aşıldı ama yetki yetmedi.");
             }
         } else {
-            // Sınırı aşmadıysa sadece kaçıncı hakkını kullandığını logla
             const embed = new EmbedBuilder()
                 .setColor('#FF4500')
                 .setTitle('🔨 Birine Ban Çakıldı!')
