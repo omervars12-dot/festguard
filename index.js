@@ -17,7 +17,7 @@ const client = new Client({
 
 // 📌 ID TANIMLAMALARI
 const SES_KANALI_ID = "1542872463870922814";
-const LOG_KANALI_ID = "1547734034023452722";
+const LOG_KANALI_ID = "1557504662842900480";
 const YETKILI_ROL_ID = "1542874337546338386"; // VIP: her şeyi yapabilir, loglanır
 
 // 📌 AYARLAR
